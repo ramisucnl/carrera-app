@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Registro de Carrera</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#007bff">
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      background: #f0f0f0;
+    }
+    h1 {
+      text-align: center;
+    }
+    label, input, textarea {
+      display: block;
+      margin: 10px auto;
+      width: 100%;
+      max-width: 400px;
+      font-size: 16px;
+    }
+    input, textarea {
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+    }
+    li {
+      background: white;
+      margin: 10px 0;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    button {
+      display: block;
+      margin: 20px auto;
+      padding: 10px 20px;
+      font-size: 16px;
+      border: none;
+      background: #007bff;
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #stop-btn {
+      background: #dc3545;
+    }
+  </style>
+</head>
+<body>
+  <h1>Seguimiento de Carrera</h1>
+
+  <label for="nombre">Nombre de la ruta</label>
+  <input type="text" id="nombre" placeholder="Ej. Subida al cerro, Entreno de martes...">
+
+  <label for="notas">Notas (opcional)</label>
+  <textarea id="notas" rows="3" placeholder="¿Cómo te sentiste? ¿Qué pasó hoy?"></textarea>
+
+  <p><strong>Distancia total:</strong> <span id="total-distance">0</span> km</p>
+
+  <ul id="km-list"></ul>
+
+  <button id="start-btn">Iniciar carrera</button>
+  <button id="stop-btn" style="display:none;">Finalizar y guardar</button>
+
+  <script>
+    let watchId;
+    let positions = [];
+    let totalDistance = 0;
+    let kmCount = 0;
+    let lastKmTime = null;
+    let kmData = [];
+
+    const startBtn = document.getElementById('start-btn');
+    const stopBtn = document.getElementById('stop-btn');
+
+    function toRadians(deg) {
+      return deg * Math.PI / 180;
+    }
+
+    function calculateDistance(pos1, pos2) {
+      const R = 6371;
+      const dLat = toRadians(pos2.lat - pos1.lat);
+      const dLon = toRadians(pos2.lon - pos1.lon);
+      const lat1 = toRadians(pos1.lat);
+      const lat2 = toRadians(pos2.lat);
+
+      const a = Math.sin(dLat/2)**2 + Math.sin(dLon/2)**2 * Math.cos(lat1) * Math.cos(lat2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    function formatTime(seconds) {
+      const min = Math.floor(seconds / 60);
+      const sec = Math.floor(seconds % 60);
+      return `${min}:${sec.toString().padStart(2, '0')}`;
+    }
+
+    function updateDisplay(km, pace, speed) {
+      const li = document.createElement('li');
+      li.innerHTML = `<strong>Kilómetro ${km}</strong><br>
+                      Ritmo: ${pace} min/km<br>
+                      Velocidad: ${speed.toFixed(2)} km/h`;
+      document.getElementById('km-list').appendChild(li);
+    }
+
+    function startTracking() {
+      positions = [];
+      totalDistance = 0;
+      kmCount = 0;
+      lastKmTime = null;
+      kmData = [];
+      document.getElementById('km-list').innerHTML = '';
+      document.getElementById('total-distance').textContent = '0';
+
+      if (navigator.geolocation) {
+        watchId = navigator.geolocation.watchPosition(pos => {
+          const { latitude, longitude } = pos.coords;
+          const timestamp = pos.timestamp;
+          const current = { lat: latitude, lon: longitude, time: timestamp };
+          positions.push(current);
+
+          if (positions.length > 1) {
+            const last = positions[positions.length - 2];
+            const dist = calculateDistance(last, current);
+            totalDistance += dist;
+
+            document.getElementById('total-distance').textContent = totalDistance.toFixed(2);
+
+            if (totalDistance >= kmCount + 1) {
+              const now = timestamp;
+              if (!lastKmTime) lastKmTime = positions[0].time;
+
+              const seconds = (now - lastKmTime) / 1000;
+              const speed = 3600 / seconds;
+              const pace = formatTime(seconds / 60);
+
+              kmCount++;
+              lastKmTime = now;
+
+              kmData.push({ km: kmCount, pace, speed: speed.toFixed(2) });
+              updateDisplay(kmCount, pace, speed);
+            }
+          }
+        }, err => {
+          alert("Error de geolocalización: " + err.message);
+        }, {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 10000
+        });
+      }
+    }
+
+    function stopAndSave() {
+      if (watchId) navigator.geolocation.clearWatch(watchId);
+
+      const nombreRuta = document.getElementById('nombre').value.trim() || "Ruta sin nombre";
+      const notas = document.getElementById('notas').value.trim();
+
+      const resultado = {
+        nombre: nombreRuta,
+        fecha: new Date().toLocaleString(),
+        distancia_total_km: totalDistance.toFixed(2),
+        kilometros: kmData,
+        notas: notas
+      };
+
+      const text = JSON.stringify(resultado, null, 2);
+      const blob = new Blob([text], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${nombreRuta.replace(/\s+/g, '_')}.json`;
+      a.click();
+
+      if (navigator.share) {
+        navigator.share({
+          title: nombreRuta,
+          text: `Corrí ${totalDistance.toFixed(2)} km 🚀\n${notas}`,
+          url: url
+        }).catch(err => console.log("No se pudo compartir:", err));
+      } else {
+        alert("Archivo descargado. ¡Compártelo desde tu carpeta de descargas!");
+      }
+
+      startBtn.style.display = 'block';
+      stopBtn.style.display = 'none';
+    }
+
+    startBtn.addEventListener('click', () => {
+      startTracking();
+      startBtn.style.display = 'none';
+      stopBtn.style.display = 'block';
+    });
+
+    stopBtn.addEventListener('click', stopAndSave);
+  </script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js')
+        .then(() => console.log('Service Worker registrado'))
+        .catch(err => console.error('Error al registrar SW', err));
+    }
+  </script>
+</body>
+</html>
